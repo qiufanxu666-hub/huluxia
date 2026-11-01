@@ -2744,14 +2744,15 @@ PANEL_M_EOF
         printf 'include $(THEOS)/makefiles/common.mk\n'
         printf '\n'
         printf 'APPLICATION_NAME = HuluXia\n'
-        printf 'HuluXia_FILES = main.m HXAppDelegate.m\n'
-        printf 'HuluXia_CFLAGS = -I../core -I../ui -O2 -Wall -Wno-unused-parameter -fobjc-arc\n'
-        printf 'HuluXia_FRAMEWORKS = UIKit Foundation WebKit CoreGraphics\n'
-        printf 'HuluXia_LDFLAGS = -L$(THEOS_STAGING_DIR)/usr/lib -lHuluXia -lHuluXiaUI -Wl,-rpath,/usr/lib\n'
+        printf '# 源码直接编进 App 本体，不链接外部 dylib —— 避开 -L/-rpath/链接顺序各种坑\n'
+        printf 'HuluXia_FILES = main.m HXAppDelegate.m HXCore.m HXEngine.c HXEngineTouch.c HXServer.c HXPanel.m\n'
+        printf 'HuluXia_CFLAGS = -I. -O2 -Wall -Wno-unused-parameter -fobjc-arc\n'
+        printf 'HuluXia_FRAMEWORKS = UIKit Foundation WebKit CoreGraphics QuartzCore\n'
+        printf 'HuluXia_PRIVATE_FRAMEWORKS = IOKit\n'
+        printf 'HuluXia_LDFLAGS = -lpthread\n'
         printf 'ifeq ($(THEOS_PACKAGE_SCHEME),roothide)\n'
-        printf 'HuluXia_LDFLAGS += -lroothide -Wl,-rpath,@loader_path/.jbroot/usr/lib\n'
+        printf 'HuluXia_LDFLAGS += -lroothide\n'
         printf 'endif\n'
-        printf '# -I 指定 bundle id；ent.plist 里的私有权限一并签入\n'
         printf 'HuluXia_CODESIGN_FLAGS = -S../ent.plist -Icom.huluxia.ios\n'
         printf '\n'
         printf 'include $(THEOS_MAKE_PATH)/application.mk\n'
@@ -3230,11 +3231,11 @@ CLI_M_EOF
         printf 'include $(THEOS)/makefiles/common.mk\n'
         printf '\n'
         printf 'LIBRARY_NAME = HuluXiaInject\n'
-        printf 'HuluXiaInject_FILES = HuluXiaInject.m embedded_ui.c ../core/HXEngine.c ../core/HXEngineTouch.c ../core/HXServer.c ../ui/HXPanel.m\n'
-        printf 'HuluXiaInject_CFLAGS = -I../core -I../ui -O2 -Wall -Wno-unused-parameter -fobjc-arc -fno-objc-arc-exceptions\n'
+        printf 'HuluXiaInject_FILES = HuluXiaInject.m embedded_ui.c HXEngine.c HXEngineTouch.c HXServer.c HXPanel.m HXCore.m\n'
+        printf 'HuluXiaInject_CFLAGS = -I. -O2 -Wall -Wno-unused-parameter -fobjc-arc\n'
         printf 'HuluXiaInject_FRAMEWORKS = UIKit Foundation WebKit CoreGraphics QuartzCore\n'
         printf 'HuluXiaInject_PRIVATE_FRAMEWORKS = IOKit\n'
-        printf 'HuluXiaInject_LDFLAGS = -lpthread -Wl,-undefined,dynamic_lookup\n'
+        printf 'HuluXiaInject_LDFLAGS = -lpthread\n'
         printf 'HuluXiaInject_INSTALL_PATH = /usr/lib\n'
         printf '\n'
         printf 'include $(THEOS_MAKE_PATH)/library.mk\n'
@@ -3292,6 +3293,17 @@ MONO_M_EOF
     fi
 
     printf '单体 dylib: mono/HuluXiaInject.dylib（TrollFool 注入 IPA 用）\n'
+
+    # ---------------- 把共享源码拷进 app/ 和 mono/（避免 ../ 相对路径在 theos 里出问题） ----------------
+    for srcf in HXEngine.c HXEngineTouch.c HXServer.c HXEngine.h HXCore.h HXCore.m; do
+        [ -f "$d/core/$srcf" ] && cp -f "$d/core/$srcf" "$d/app/$srcf"
+        [ -f "$d/core/$srcf" ] && cp -f "$d/core/$srcf" "$d/mono/$srcf"
+    done
+    for srcf in HXPanel.h HXPanel.m; do
+        [ -f "$d/ui/$srcf" ] && cp -f "$d/ui/$srcf" "$d/app/$srcf"
+        [ -f "$d/ui/$srcf" ] && cp -f "$d/ui/$srcf" "$d/mono/$srcf"
+    done
+    printf '共享源码: 已拷入 app/ 与 mono/\n'
 
     # 悬浮球图标随 deb 装到设备（App 与 dylib 都能读到）
     if [ -f "$d/Resources/ball.png" ]; then
