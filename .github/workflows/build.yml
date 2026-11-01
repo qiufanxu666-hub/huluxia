@@ -1,0 +1,53 @@
+name: Build Hulixia
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unzip project
+        run: |
+          unzip -q Hulixia.zip
+          ls Hulixia
+
+      - name: Install tools
+        run: |
+          brew install ldid dpkg make xz
+          echo "$(brew --prefix make)/libexec/gnubin" >> $GITHUB_PATH
+
+      - name: Install Theos
+        run: |
+          git clone --recursive --depth=1 https://github.com/theos/theos.git "$HOME/theos"
+          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+
+      - name: Build rootful deb
+        working-directory: Hulixia
+        run: |
+          make clean || true
+          make package FINALPACKAGE=1
+          mkdir -p ../out
+          for f in packages/*.deb; do cp "$f" "../out/$(basename "${f%.deb}")_rootful.deb"; done
+
+      - name: Build rootless deb
+        working-directory: Hulixia
+        run: |
+          make clean || true
+          rm -rf packages
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
+          for f in packages/*.deb; do cp "$f" "../out/$(basename "${f%.deb}")_rootless.deb"; done
+
+      - name: Build standalone dylib
+        working-directory: Hulixia
+        run: |
+          ./build_dylib.sh
+          cp build/Hulixia.dylib ../out/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Hulixia
+          path: out/*
