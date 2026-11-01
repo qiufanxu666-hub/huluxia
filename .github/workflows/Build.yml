@@ -1,0 +1,73 @@
+name: 编译葫芦侠（deb + dylib）
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      scheme:
+        description: '越狱类型（RootHide 选 roothide）'
+        required: true
+        default: 'roothide'
+        type: choice
+        options: [roothide, rootless, rootful]
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 theos + iOS SDK + ldid
+        uses: waruhachi/theos-action@v2.6.5
+        with:
+          theos-src: 'roothide/theos'
+          theos-branch: 'master'
+          sdks-src: 'theos/sdks'
+          sdks-branch: 'master'
+
+      - name: 生成完整工程
+        env:
+          HULUXIA_SCHEME: ${{ github.event.inputs.scheme || 'roothide' }}
+        run: |
+          sh huluxia.sh gen ./proj
+          ls proj
+
+      - name: 编译 桌面App deb
+        env:
+          HULUXIA_SCHEME: ${{ github.event.inputs.scheme || 'roothide' }}
+        run: |
+          export THEOS=~/theos
+          cd proj
+          perl -pi -e 's/^SUBPROJECTS = .*/SUBPROJECTS = core ui app/' Makefile
+          grep SUBPROJECTS Makefile
+          make clean || true
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=${{ github.event.inputs.scheme || 'roothide' }}
+          mkdir -p ../out
+          find . -name "*.deb" -exec cp {} ../out/葫芦侠-桌面App.deb \; 2>/dev/null || true
+
+      - name: 编译 单体注入 dylib
+        env:
+          HULUXIA_SCHEME: ${{ github.event.inputs.scheme || 'roothide' }}
+        run: |
+          export THEOS=~/theos
+          cd proj/mono
+          make clean || true
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=${{ github.event.inputs.scheme || 'roothide' }}
+          echo "--- 找 dylib ---"
+          find . -name "*.dylib" -print
+
+      - name: 收集 dylib
+        run: |
+          mkdir -p out
+          find . -name "HuluXiaInject.dylib" -exec cp {} out/ \; 2>/dev/null || true
+          ls -la out/
+
+      - name: 上传
+        uses: actions/upload-artifact@v4
+        with:
+          name: 葫芦侠-${{ github.event.inputs.scheme || 'roothide' }}
+          path: out/*
+          if-no-files-found: warn
