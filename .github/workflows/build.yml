@@ -1,0 +1,42 @@
+name: Build iOS Tweak / H5GG Tool
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v3
+
+    - name: Setup Theos
+      run: |
+        echo "Setting up Theos environment..."
+        git clone --recursive https://github.com/theos/theos.git $HOME/theos
+        
+        # 安装 iOS SDK (Theos 推荐使用 iPhoneOS SDK)
+        sudo git clone https://github.com/theos/sdks.git $HOME/theos/sdks
+        
+        # 配置环境变量
+        echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+        echo "$HOME/theos/bin" >> $GITHUB_PATH
+
+    - name: Build Project
+      run: |
+        echo "Starting build process..."
+        make package
+      env:
+        THEOS: ${{ github.workspace }}/theos
+
+    - name: Upload Build Artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: Compiled-Packages
+        path: |
+          packages/*.deb
+          packages/*.dylib
