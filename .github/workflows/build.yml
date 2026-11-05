@@ -1,0 +1,97 @@
+name: Build Huluxia
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # ── Lua / GG 兼容层测试：真实加载 ui.html（含 Fengari），挂模拟宿主；不覆盖原生内存引擎 ──
+  lua-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Playwright
+        working-directory: tests
+        run: |
+          npm init -y >/dev/null
+          npm install playwright@1.49.1
+          npx playwright install --with-deps chromium
+      - name: Run Lua/GG tests
+        working-directory: tests
+        run: node lua_gg_test.mjs ../Resources/ui.html ci
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lua-test-results
+          path: tests/results_ci.json
+          if-no-files-found: warn
+
+  build:
+    needs: lua-tests
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          clang --version | head -1
+
+      - name: Check icon resources (尺寸必须符合 iOS 规格)
+        run: |
+          python3 - <<'PY'
+          import struct, sys
+          def size(p):
+              d = open(p, 'rb').read(24)
+              assert d[:8] == b'\x89PNG\r\n\x1a\n', p + ' 不是 PNG'
+              return struct.unpack('>II', d[16:24])
+          want = {'Launcher/Resources/Icon@2x.png': (120, 120), 'Launcher/Resources/Icon@3x.png': (180, 180), 'Resources/ball.png': (256, 256)}
+          bad = [f'{p}: {size(p)} != {w}' for p, w in want.items() if size(p) != w]
+          if bad: sys.exit('图标尺寸不对:\n' + '\n'.join(bad))
+          print('icon sizes OK')
+          PY
+
+      - name: Install tools
+        run: |
+          brew install ldid dpkg make xz
+          echo "$(brew --prefix make)/libexec/gnubin" >> $GITHUB_PATH
+
+      - name: Install Theos
+        run: |
+          git clone --recursive --depth=1 https://github.com/theos/theos.git "$HOME/theos"
+          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+
+      - name: Build rootful deb (越狱 /Library)
+        run: |
+          rm -rf packages out && mkdir -p out
+          make clean
+          make package FINALPACKAGE=1
+          debs=(packages/*.deb); [ "${#debs[@]}" -eq 1 ] || { echo "期望 1 个 deb，实际 ${#debs[@]}"; ls -la packages; exit 1; }
+          cp "${debs[0]}" "out/$(basename "${debs[0]%.deb}")_rootful.deb"
+
+      - name: Build rootless deb (Dopamine / palera1n rootless)
+        run: |
+          rm -rf packages      # 清掉上一步的 rootful 包，避免被错标成 rootless
+          make clean
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
+          debs=(packages/*.deb); [ "${#debs[@]}" -eq 1 ] || { echo "期望 1 个 deb，实际 ${#debs[@]}"; ls -la packages; exit 1; }
+          cp "${debs[0]}" "out/$(basename "${debs[0]%.deb}")_rootless.deb"
+
+      - name: Build standalone dylib (免越狱注入 IPA)
+        run: |
+          ./build_dylib.sh
+          cp build/Huluxia.dylib out/
+
+      - name: Verify artifacts (deb 与 dylib 必须内嵌仓库里的同一份 ui.html / ball.png / 图标)
+        run: ./verify_build.sh out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Huluxia
+          path: out/*
+          if-no-files-found: error
